@@ -1,0 +1,11 @@
+{
+  "name": "Darija Dental — tłumacz zajęć",
+  "short_name": "Darija Dental",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f766e",
+  "theme_color": "#0f766e",
+  "lang": "pl",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
