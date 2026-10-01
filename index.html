@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Darija Dental</title>
+  <meta name="description" content="Tłumacz zajęć z protetyki dentystycznej: darija + francuski → polski." />
+  <meta name="theme-color" content="#0f766e" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>🦷 Darija&nbsp;Dental</h1>
+    <span id="net" class="pill" hidden>offline ✓</span>
+  </header>
+
+  <main>
+    <!-- NA ŻYWO -->
+    <section id="tab-live" class="tab active">
+      <div id="setup-banner" class="card banner" hidden>
+        <b>Pierwsze uruchomienie:</b> pobierz modele (raz, przez Wi-Fi). Potem aplikacja działa bez internetu.
+        <button id="btn-go-setup" class="primary">⬇️ Pobierz modele</button>
+      </div>
+      <div class="card controls">
+        <input id="lesson-title" type="text" placeholder="Temat zajęć (np. Wycisk alginatowy)" />
+        <label>Nauczyciel mówi:
+          <select id="speech-lang">
+            <option value="arabic">Darija (mieszana z francuskim)</option>
+            <option value="french">Français — głównie po francusku</option>
+            <option value="auto">Automatycznie</option>
+          </select>
+        </label>
+        <div class="row">
+          <button id="btn-rec" class="big primary">🎙️ Start</button>
+          <button id="btn-vocab" class="big" disabled>📚 Słówka z lekcji</button>
+          <button id="btn-new" title="Nowe zajęcia">🆕</button>
+        </div>
+        <div class="meter" aria-hidden="true"><div id="level"></div></div>
+        <p id="live-status" class="hint">Połóż telefon blisko nauczyciela. Tłumaczenie pojawia się po każdym zdaniu (kilka sekund opóźnienia).</p>
+      </div>
+      <div id="live-feed" class="feed"></div>
+    </section>
+
+    <!-- TŁUMACZ -->
+    <section id="tab-ask" class="tab">
+      <div class="card">
+        <textarea id="ask-input" rows="3" placeholder="Wpisz coś, co usłyszałaś lub przeczytałaś (po francusku albo w darija pisanej arabskimi literami)…"></textarea>
+        <div class="row">
+          <button id="btn-translate" class="primary grow">🔁 Przetłumacz</button>
+        </div>
+        <p class="hint">Słowa z darija pisane łacinką (np. „daba”, „khassek”) najlepiej sprawdzać w zakładce 📚 Słowa. Zdjęcie tablicy: użyj darmowej aplikacji <b>Google Lens</b> / <b>Tłumacz Google</b> (aparat).</p>
+      </div>
+      <div id="ask-feed" class="feed"></div>
+    </section>
+
+    <!-- SŁOWNICZEK -->
+    <section id="tab-words" class="tab">
+      <div class="card">
+        <input id="word-search" type="search" placeholder="Szukaj: empreinte, wycisk, daba…" />
+        <div class="seg">
+          <button data-dict="dental" class="on">🦷 Protetyka FR→PL</button>
+          <button data-dict="darija">🇲🇦 Darija→PL</button>
+          <button data-dict="cards">🃏 Fiszki</button>
+        </div>
+        <p id="darija-help" class="hint" hidden>Darija pisana po marokańsku: <b>3</b> = ع (gardłowe „a”), <b>7</b> = ح (mocne „h”), <b>9</b> = ق (głębokie „k”), <b>kh</b> = polskie „ch”, <b>gh</b> = francuskie „r”, <b>ch</b> = „sz”, <b>ou</b> = „u”.</p>
+      </div>
+      <div id="word-list"></div>
+      <div id="flashcard" class="card flash" hidden>
+        <div id="fc-front" class="fc-front"></div>
+        <div id="fc-back" class="fc-back" hidden></div>
+        <div class="row">
+          <button id="fc-show" class="grow">Pokaż</button>
+          <button id="fc-next" class="grow primary">Następna ➜</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- NOTATKI -->
+    <section id="tab-notes" class="tab">
+      <div id="notes-list"></div>
+      <div id="note-view" hidden>
+        <div class="row">
+          <button id="note-back">⬅ Wróć</button>
+          <button id="note-export" class="grow">⬇️ Pobierz .txt</button>
+          <button id="note-delete" class="danger">🗑️</button>
+        </div>
+        <div id="note-body"></div>
+      </div>
+    </section>
+
+    <!-- USTAWIENIA -->
+    <section id="tab-settings" class="tab">
+      <div class="card">
+        <h2>Modele sztucznej inteligencji (darmowe)</h2>
+        <p class="hint">Wszystko działa w telefonie — bez konta, bez opłat, bez internetu. Modele trzeba pobrać <b>jeden raz</b> (przez Wi-Fi).</p>
+        <label>Rozpoznawanie mowy (Whisper):
+          <select id="whisper">
+            <option value="whisper-base">Szybki — whisper-base (≈ 80 MB)</option>
+            <option value="whisper-small">Dokładniejszy — whisper-small (≈ 250 MB, wolniejszy)</option>
+          </select>
+        </label>
+        <label>Tłumacz na:
+          <select id="target">
+            <option value="pl">Polski</option>
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+          </select>
+        </label>
+        <p class="hint">Tłumaczenie: model NLLB-200 (≈ 600 MB), zna darija marokańską.</p>
+        <div class="row">
+          <button id="btn-download" class="primary grow">⬇️ Pobierz / sprawdź modele</button>
+        </div>
+        <div id="dl" hidden>
+          <div class="meter big-meter"><div id="dl-bar"></div></div>
+          <p id="dl-text" class="hint"></p>
+        </div>
+        <p id="storage-info" class="hint"></p>
+      </div>
+      <div class="card">
+        <h2>Wskazówki</h2>
+        <ul>
+          <li>Najlepiej działa w <b>Chrome</b> na telefonie z min. 4 GB RAM (lub na laptopie).</li>
+          <li>Jeśli nauczyciel mówi głównie po francusku, wybierz <b>Français</b> — wynik będzie dużo lepszy.</li>
+          <li>Tłumaczenie jest automatyczne i <b>przybliżone</b> — 📌 terminy pod spodem pochodzą ze sprawdzonego słowniczka.</li>
+          <li>Dodaj aplikację do ekranu głównego (menu → „Dodaj do ekranu głównego”).</li>
+          <li>Zapytaj nauczyciela o zgodę na nagrywanie zajęć.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs">
+    <button data-tab="live" class="on">🎙️<span>Na żywo</span></button>
+    <button data-tab="ask">🔁<span>Tłumacz</span></button>
+    <button data-tab="words">📚<span>Słowa</span></button>
+    <button data-tab="notes">🗂️<span>Notatki</span></button>
+    <button data-tab="settings">⚙️<span>Ustawienia</span></button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
