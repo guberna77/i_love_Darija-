@@ -299,9 +299,30 @@ export const DARIJA = [
   { dj: "mya", ar: "مية", pl: "100", cat: "Liczby" },
 ];
 
-/** Compact glossary text injected into Claude's system prompt (cached). */
-export function glossaryForPrompt() {
-  const d = DENTAL.map((t) => `${t.fr} = ${t.pl}`).join("\n");
-  const j = DARIJA.map((t) => `${t.dj} (${t.ar}) = ${t.pl}`).join("\n");
-  return `Dental-prosthetics terms (French = Polish):\n${d}\n\nClassroom Darija (Latin / Arabic script = Polish):\n${j}`;
+// ---------- Détection des termes du glossaire dans un texte reconnu ----------
+
+const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, " ");
+const ARTICLES = /\b(le|la|les|l|un|une|de|du|des|d)\b/g;
+const words = (s) => " " + norm(s).replace(/[^\p{L}\p{N}]+/gu, " ").replace(ARTICLES, " ").replace(/\s+/g, " ").trim() + " ";
+const variants = (s) => s.split("/").map((v) => words(v.replace(/\(.*?\)/g, ""))).filter((v) => v.trim().length >= 3);
+const arVariants = (s) => s.split("/").map((v) => " " + v.replace(/[؟?]/g, "").trim() + " ").filter((v) => v.trim().length >= 3);
+
+const INDEX = [
+  ...DENTAL.map((t) => ({ keys: variants(t.fr), label: t.fr, pl: t.pl })),
+  ...DARIJA.map((t) => ({ keys: [...variants(t.dj).filter((v) => v.trim().length >= 4), ...arVariants(t.ar)], label: `${t.dj} (\u2068${t.ar}\u2069)`, pl: t.pl })),
+].filter((t) => t.keys.length);
+
+/** Glossary entries whose French / Darija form appears in `text`. */
+export function findTerms(text) {
+  const hay = words(text);
+  const seen = new Set();
+  const out = [];
+  for (const t of INDEX) {
+    if (seen.has(t.label)) continue;
+    if (t.keys.some((k) => hay.includes(k))) {
+      seen.add(t.label);
+      out.push({ term: t.label, pl: t.pl });
+    }
+  }
+  return out;
 }

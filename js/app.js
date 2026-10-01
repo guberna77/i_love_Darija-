@@ -1,7 +1,6 @@
-import { ask, explainError } from "./claude.js";
-import { LectureListener, speechSupported } from "./speech.js";
-import { DENTAL, DARIJA } from "./glossary.js";
-import { md } from "./markdown.js";
+import { preload, transcribe, translateText, onProgress, explainError } from "./ai.js";
+import { Recorder, micSupported } from "./recorder.js";
+import { DENTAL, DARIJA, findTerms } from "./glossary.js";
 import {
   loadSettings, saveSettings, loadSessions, upsertSession, deleteSession,
 } from "./storage.js";
@@ -9,6 +8,7 @@ import {
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 let settings = loadSettings();
+const modelsReady = () => !!settings.ready?.[settings.whisper];
 
 // ---------- helpers ----------
 function toast(msg, ms = 3500) {
@@ -19,52 +19,39 @@ function toast(msg, ms = 3500) {
   toast.timer = setTimeout(() => (t.hidden = true), ms);
 }
 
-/** Render Claude output; the "📌" line gets its own style. */
-function renderAnswer(el, text) {
-  const html = md(text);
-  el.innerHTML = html.replace(/<p>📌(.*?)<\/p>/g, '<p class="term-line">📌$1</p>');
-}
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
 
-function makeItem(feed, { src, prepend = true } = {}) {
-  const item = document.createElement("article");
-  item.className = "item";
-  if (src) {
-    const s = document.createElement("div");
-    s.className = "src";
-    s.textContent = src;
-    item.append(s);
-  }
-  const tr = document.createElement("div");
-  tr.className = "tr loading";
-  item.append(tr);
+/** A result card: original text (small), translation (big), glossary terms. */
+function makeItem(feed, { src = "", prepend = true } = {}) {
+  const item = el("article", "item");
+  const s = el("div", "src", src);
+  const tr = el("div", "tr loading");
+  const terms = el("div", "terms term-line");
+  terms.hidden = true;
+  item.append(s, tr, terms);
   prepend ? feed.prepend(item) : feed.append(item);
-  return { item, tr };
-}
-
-function addCopy(item, getText) {
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  const b = document.createElement("button");
-  b.textContent = "📋 Kopiuj";
-  b.onclick = async () => {
-    try { await navigator.clipboard.writeText(getText()); toast("Skopiowano"); }
-    catch { toast("Nie udało się skopiować"); }
+  return {
+    item,
+    setSrc: (t) => (s.textContent = t),
+    setTr: (t) => { tr.classList.remove("loading"); tr.textContent = t; },
+    setErr: (t) => { tr.classList.remove("loading"); tr.innerHTML = ""; tr.append(el("p", "err", t)); },
+    setTerms: (list) => {
+      terms.hidden = !list.length;
+      terms.textContent = list.length ? "📌 " + list.map((x) => `${x.term} → ${x.pl}`).join(" · ") : "";
+    },
   };
-  meta.append(b);
-  item.append(meta);
 }
 
-async function run(tr, opts) {
-  try {
-    const text = await ask({ settings, ...opts, onText: (t) => renderAnswer(tr, t) });
-    tr.classList.remove("loading");
-    renderAnswer(tr, text);
-    return text;
-  } catch (err) {
-    tr.classList.remove("loading");
-    tr.innerHTML = `<p class="err">${explainError(err)}</p>`;
-    throw err;
-  }
+function needModels() {
+  if (modelsReady()) return false;
+  toast("Najpierw pobierz modele w ⚙️ Ustawieniach (raz, przez Wi-Fi).", 5000);
+  showTab("settings");
+  return true;
 }
 
 // ---------- tabs ----------
@@ -72,14 +59,15 @@ function showTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   if (name === "notes") renderNotes();
+  if (name === "settings") showStorage();
   window.scrollTo(0, 0);
 }
 $$(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
 // ---------- LIVE ----------
-let listener = null;
-let session = null; // { id, title, date, lang, items: [{src, tr}], summary }
-let queue = Promise.resolve();
+let recorder = null;
+let session = null; // { id, title, date, items: [{src, tr, terms}] }
+let waiting = 0;    // fragments not yet processed
 
 $("#speech-lang").value = settings.speechLang;
 $("#speech-lang").onchange = (e) => {
@@ -87,176 +75,140 @@ $("#speech-lang").onchange = (e) => {
   saveSettings(settings);
 };
 
-if (!speechSupported) {
+if (!micSupported) {
   $("#btn-rec").disabled = true;
-  $("#live-hint").textContent =
-    "Ta przeglądarka nie obsługuje rozpoznawania mowy. Otwórz aplikację w Chrome (Android) lub Safari (iPhone).";
+  $("#live-status").textContent = "Ta przeglądarka nie daje dostępu do mikrofonu. Otwórz aplikację w Chrome.";
 }
 
 function persistSession() {
   if (!session) return;
   session.title = $("#lesson-title").value.trim() || session.title;
-  if (!upsertSession(session)) toast("Pamięć telefonu pełna — usuń stare notatki.");
+  if (!upsertSession(session)) toast("Pamięć pełna — usuń stare notatki.");
 }
 
-function contextFor(index) {
-  return session.items.slice(Math.max(0, index - 3), index).map((x) => x.src).join(" … ");
+function updateStatus() {
+  const rec = !!recorder;
+  $("#live-status").textContent = rec
+    ? waiting > 1
+      ? `🎧 Słucham… (${waiting} fragmenty w kolejce — telefon nie nadąża, rozważ model „szybki”)`
+      : waiting === 1 ? "🎧 Słucham… ⏳ tłumaczę" : "🎧 Słucham…"
+    : waiting ? `⏳ Kończę tłumaczenie (${waiting})…` : "Zatrzymano. Notatki są zapisane w 🗂️ Notatkach.";
 }
 
-function onChunk(src) {
-  const index = session.items.length;
-  const entry = { src, tr: "" };
+function onAudio(audio) {
+  const entry = { src: "", tr: "", terms: [] };
   session.items.push(entry);
-  const { item, tr } = makeItem($("#live-feed"), { src });
-  // Translate one fragment at a time, in order, so context stays coherent.
-  queue = queue.then(async () => {
-    const ctx = contextFor(index);
-    const content =
-      (ctx ? `Preceding context (already translated, do not translate again): ${ctx}\n\n` : "") +
-      `Speech recognizer language: ${settings.speechLang}\nLatest fragment: ${src}`;
-    try {
-      entry.tr = await run(tr, { mode: "live", content });
-      addCopy(item, () => entry.tr);
-    } catch { /* error already shown in the card */ }
-    persistSession();
-    $("#btn-summary").disabled = false;
-  });
+  const card = makeItem($("#live-feed"), { src: "🎧 …" });
+  waiting++;
+  updateStatus();
+  transcribe(audio, settings, (src) => {
+    entry.src = src;
+    card.setSrc(src || "(cisza / niezrozumiałe)");
+    entry.terms = findTerms(src);
+    card.setTerms(entry.terms);
+  })
+    .then(({ src, tr }) => {
+      if (!src) { card.item.remove(); session.items.splice(session.items.indexOf(entry), 1); return; }
+      entry.tr = tr;
+      card.setTr(tr);
+      $("#btn-vocab").disabled = false;
+    })
+    .catch((err) => card.setErr(explainError(err)))
+    .finally(() => { waiting--; updateStatus(); persistSession(); });
 }
 
-function startLecture() {
-  if (!settings.apiKey) { toast("Najpierw dodaj klucz API w ⚙️ Ustawieniach."); showTab("settings"); return; }
+async function startLecture() {
+  if (needModels()) return;
   if (!session) {
     const now = new Date();
     session = {
       id: now.getTime().toString(36),
       title: $("#lesson-title").value.trim() || "Zajęcia " + now.toLocaleDateString("pl-PL"),
       date: now.toISOString(),
-      lang: settings.speechLang,
       items: [],
-      summary: "",
     };
     $("#live-feed").innerHTML = "";
   }
-  listener = new LectureListener({
-    lang: settings.speechLang,
-    onChunk,
-    onInterim: (t) => { $("#interim").hidden = !t; $("#interim").textContent = t; },
-    onError: (msg) => { toast(msg, 6000); if (!listener?.running) stopLecture(); },
-  });
+  recorder = new Recorder(onAudio, (lvl) => ($("#level").style.width = Math.min(100, lvl * 600) + "%"));
   try {
-    listener.start();
+    await recorder.start();
   } catch (e) {
-    toast("Nie można uruchomić mikrofonu: " + e.message);
+    recorder = null;
+    toast("Brak dostępu do mikrofonu — zezwól w ustawieniach przeglądarki.", 6000);
     return;
   }
   $("#btn-rec").textContent = "⏹️ Stop";
   $("#btn-rec").classList.add("recording");
   $("#speech-lang").disabled = true;
+  updateStatus();
   navigator.wakeLock?.request("screen").then((l) => (startLecture.lock = l)).catch(() => {});
 }
 
-function stopLecture() {
-  listener?.stop();
-  listener = null;
+async function stopLecture() {
+  const r = recorder;
+  recorder = null;
+  await r?.stop();
   $("#btn-rec").textContent = "🎙️ Start";
   $("#btn-rec").classList.remove("recording");
   $("#speech-lang").disabled = false;
-  $("#interim").hidden = true;
+  $("#level").style.width = "0";
   startLecture.lock?.release?.().catch(() => {});
+  updateStatus();
   persistSession();
 }
 
-$("#btn-rec").onclick = () => (listener ? stopLecture() : startLecture());
-
-$("#btn-summary").onclick = async () => {
-  if (!session?.items.length) return;
-  await queue; // let pending fragments finish
-  const transcript = session.items
-    .map((x, i) => `[${i + 1}] ORIGINAL: ${x.src}\nTRANSLATION: ${x.tr}`)
-    .join("\n\n");
-  const { item, tr } = makeItem($("#live-feed"), { src: "📝 Podsumowanie zajęć" });
-  item.scrollIntoView({ behavior: "smooth" });
-  $("#btn-summary").disabled = true;
-  try {
-    session.summary = await run(tr, {
-      mode: "summary",
-      content: `Lesson title: ${session.title}\n\nTranscript:\n${transcript}`,
-    });
-    addCopy(item, () => session.summary);
-    persistSession();
-    toast("Zapisano w 🗂️ Notatkach");
-  } catch {}
-  $("#btn-summary").disabled = false;
-};
-
-// Keep the title saved while typing
+$("#btn-rec").onclick = () => (recorder ? stopLecture() : startLecture());
 $("#lesson-title").oninput = () => session && persistSession();
 
-$("#btn-new").onclick = () => {
-  if (listener) stopLecture();
+$("#btn-new").onclick = async () => {
+  if (recorder) await stopLecture();
   session = null;
   $("#live-feed").innerHTML = "";
   $("#lesson-title").value = "";
-  $("#btn-summary").disabled = true;
+  $("#btn-vocab").disabled = true;
   toast("Nowe zajęcia — poprzednie są w 🗂️ Notatkach");
 };
 
-// ---------- PHOTO ----------
-function resizeImage(file, max = 1568) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, max / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * scale);
-      c.height = Math.round(img.height * scale);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(img.src);
-      resolve(c.toDataURL("image/jpeg", 0.85));
-    };
-    img.onerror = () => reject(new Error("Nie można odczytać zdjęcia"));
-    img.src = URL.createObjectURL(file);
-  });
+/** All glossary words heard during the lesson, as a table. */
+function vocabTable(items) {
+  const map = new Map();
+  for (const x of items) for (const t of x.terms || []) map.set(t.term, t.pl);
+  const wrap = el("div", "table-wrap");
+  if (!map.size) { wrap.append(el("p", "hint", "Nie rozpoznano jeszcze słów ze słowniczka.")); return wrap; }
+  const table = el("table");
+  const head = el("tr");
+  head.append(el("th", null, "Français / Darija"), el("th", null, "Polski"));
+  table.append(head);
+  for (const [term, pl] of [...map].sort((a, b) => a[0].localeCompare(b[0], "fr"))) {
+    const row = el("tr");
+    row.append(el("td", null, term), el("td", null, pl));
+    table.append(row);
+  }
+  wrap.append(table);
+  return wrap;
 }
 
-$("#photo-input").onchange = async (e) => {
-  const file = e.target.files?.[0];
-  e.target.value = "";
-  if (!file) return;
-  if (!settings.apiKey) { toast("Najpierw dodaj klucz API w ⚙️ Ustawieniach."); showTab("settings"); return; }
-  let dataUrl;
-  try { dataUrl = await resizeImage(file); } catch (err) { toast(err.message); return; }
-  $("#photo-preview").src = dataUrl;
-  $("#photo-preview").hidden = false;
-  const { item, tr } = makeItem($("#photo-feed"), { src: "📷 " + new Date().toLocaleTimeString("pl-PL") });
-  const content = [
-    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: dataUrl.split(",")[1] } },
-    { type: "text", text: "Przetłumacz to zdjęcie z zajęć." },
-  ];
-  try {
-    const text = await run(tr, { mode: "image", content });
-    addCopy(item, () => text);
-  } catch {}
+$("#btn-vocab").onclick = () => {
+  if (!session) return;
+  const card = el("article", "item");
+  card.append(el("div", "src", "📚 Słówka z tej lekcji"), vocabTable(session.items));
+  $("#live-feed").prepend(card);
 };
 
-// ---------- TRANSLATE / ASK ----------
-const chat = []; // tutor history
-
-async function submitAsk(mode) {
+// ---------- TRANSLATE ----------
+$("#btn-translate").onclick = async () => {
   const q = $("#ask-input").value.trim();
-  if (!q) return;
-  if (!settings.apiKey) { toast("Najpierw dodaj klucz API w ⚙️ Ustawieniach."); showTab("settings"); return; }
-  const { item, tr } = makeItem($("#ask-feed"), { src: (mode === "ask" ? "💬 " : "🔁 ") + q });
+  if (!q || needModels()) return;
+  const card = makeItem($("#ask-feed"), { src: q });
+  card.setTerms(findTerms(q));
   $("#ask-input").value = "";
   try {
-    const history = mode === "ask" ? chat.slice(-12) : [];
-    const text = await run(tr, { mode, content: q, history });
-    if (mode === "ask") chat.push({ role: "user", content: q }, { role: "assistant", content: text });
-    addCopy(item, () => text);
-  } catch {}
-}
-$("#btn-translate").onclick = () => submitAsk("text");
-$("#btn-ask").onclick = () => submitAsk("ask");
+    const { tr } = await translateText(q, settings);
+    card.setTr(tr);
+  } catch (err) {
+    card.setErr(explainError(err));
+  }
+};
 
 // ---------- GLOSSARY ----------
 let dict = "dental";
@@ -278,29 +230,15 @@ function renderWords() {
   for (const w of rows) {
     if (w.cat !== cat) {
       cat = w.cat;
-      const h = document.createElement("div");
-      h.className = "word-cat";
-      h.textContent = cat;
-      list.append(h);
+      list.append(el("div", "word-cat", cat));
     }
-    const el = document.createElement("div");
-    el.className = "word";
-    const a = document.createElement("div");
-    a.className = "w1";
-    a.textContent = w.fr || w.dj;
-    if (w.ar) {
-      const ar = document.createElement("span");
-      ar.className = "ar";
-      ar.textContent = w.ar;
-      a.append(ar);
-    }
-    const b = document.createElement("div");
-    b.className = "w2";
-    b.textContent = w.pl;
-    el.append(a, b);
-    list.append(el);
+    const row = el("div", "word");
+    const a = el("div", "w1", w.fr || w.dj);
+    if (w.ar) a.append(el("span", "ar", w.ar));
+    row.append(a, el("div", "w2", w.pl));
+    list.append(row);
   }
-  if (!rows.length) list.innerHTML = '<p class="hint">Brak wyników. Zapytaj w zakładce 💬 Tłumacz.</p>';
+  if (!rows.length) list.append(el("p", "hint", "Brak wyników. Spróbuj w zakładce 🔁 Tłumacz."));
 }
 
 function nextCard() {
@@ -334,16 +272,14 @@ function renderNotes() {
   list.innerHTML = "";
   const sessions = loadSessions();
   if (!sessions.length) {
-    list.innerHTML = '<div class="card"><p class="hint">Brak zapisanych zajęć. Nagraj pierwsze w zakładce 🎙️ Na żywo.</p></div>';
+    const c = el("div", "card");
+    c.append(el("p", "hint", "Brak zapisanych zajęć. Nagraj pierwsze w zakładce 🎙️ Na żywo."));
+    list.append(c);
     return;
   }
   for (const s of sessions) {
-    const b = document.createElement("button");
-    b.className = "note";
-    b.textContent = s.title;
-    const small = document.createElement("small");
-    small.textContent = `${new Date(s.date).toLocaleString("pl-PL")} · ${s.items.length} fragm.${s.summary ? " · 📝" : ""}`;
-    b.append(small);
+    const b = el("button", "note", s.title);
+    b.append(el("small", null, `${new Date(s.date).toLocaleString("pl-PL")} · ${s.items.length} fragm.`));
     b.onclick = () => showNote(s);
     list.append(b);
   }
@@ -355,18 +291,14 @@ function showNote(s) {
   $("#note-view").hidden = false;
   const body = $("#note-body");
   body.innerHTML = "";
-  const h = document.createElement("h2");
-  h.textContent = s.title;
-  body.append(h);
-  if (s.summary) {
-    const { tr } = makeItem(body, { src: "📝 Podsumowanie", prepend: false });
-    tr.classList.remove("loading");
-    renderAnswer(tr, s.summary);
-  }
+  body.append(el("h2", null, s.title));
+  const voc = el("article", "item");
+  voc.append(el("div", "src", "📚 Słówka z lekcji"), vocabTable(s.items));
+  body.append(voc);
   for (const x of s.items) {
-    const { tr } = makeItem(body, { src: x.src, prepend: false });
-    tr.classList.remove("loading");
-    renderAnswer(tr, x.tr || "—");
+    const card = makeItem(body, { src: x.src, prepend: false });
+    card.setTr(x.tr || "—");
+    card.setTerms(x.terms || []);
   }
 }
 
@@ -381,9 +313,11 @@ $("#note-delete").onclick = () => {
 $("#note-export").onclick = () => {
   if (!openNote) return;
   const s = openNote;
+  const vocab = new Map();
+  s.items.forEach((x) => (x.terms || []).forEach((t) => vocab.set(t.term, t.pl)));
   const txt =
     `${s.title}\n${new Date(s.date).toLocaleString("pl-PL")}\n\n` +
-    (s.summary ? `=== PODSUMOWANIE ===\n${s.summary}\n\n` : "") +
+    "=== SŁÓWKA ===\n" + [...vocab].map(([a, b]) => `${a} — ${b}`).join("\n") + "\n\n" +
     "=== TRANSKRYPCJA ===\n" +
     s.items.map((x) => `> ${x.src}\n${x.tr}\n`).join("\n");
   const a = document.createElement("a");
@@ -393,38 +327,59 @@ $("#note-export").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
 
-// ---------- SETTINGS ----------
-$("#api-key").value = settings.apiKey;
-$("#model").value = settings.model;
+// ---------- SETTINGS / MODEL DOWNLOAD ----------
+$("#whisper").value = settings.whisper;
 $("#target").value = settings.target;
+$("#whisper").onchange = (e) => { settings.whisper = e.target.value; saveSettings(settings); refreshBanner(); };
+$("#target").onchange = (e) => { settings.target = e.target.value; saveSettings(settings); };
 
-function readSettingsForm() {
-  settings = {
-    ...settings,
-    apiKey: $("#api-key").value.trim(),
-    model: $("#model").value,
-    target: $("#target").value,
-  };
-  saveSettings(settings);
+const files = new Map(); // file -> {loaded,total}
+onProgress((p) => {
+  files.set(p.model + "/" + p.file, { loaded: p.loaded || 0, total: p.total || 0 });
+  let loaded = 0, total = 0;
+  for (const f of files.values()) { loaded += f.loaded; total += f.total; }
+  const pct = total ? Math.round((loaded / total) * 100) : 0;
+  $("#dl").hidden = false;
+  $("#dl-bar").style.width = pct + "%";
+  $("#dl-text").textContent = `Pobieranie: ${(loaded / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB (${pct}%) — ${p.model}`;
+});
+
+$("#btn-download").onclick = async () => {
+  const btn = $("#btn-download");
+  btn.disabled = true;
+  files.clear();
+  $("#dl").hidden = false;
+  $("#dl-bar").style.width = "0";
+  $("#dl-text").textContent = "Ładowanie modeli… (pierwszy raz może potrwać kilka minut)";
+  navigator.storage?.persist?.().catch(() => {});
+  try {
+    await preload(settings);
+    settings.ready = { ...settings.ready, [settings.whisper]: true };
+    saveSettings(settings);
+    $("#dl-bar").style.width = "100%";
+    $("#dl-text").textContent = "✅ Modele gotowe — aplikacja działa teraz bez internetu.";
+  } catch (err) {
+    $("#dl-text").textContent = navigator.onLine
+      ? "Nie udało się pobrać modeli (" + err.message + "). Spróbuj ponownie przez Wi-Fi."
+      : "Brak internetu — modele trzeba pobrać raz, przez Wi-Fi.";
+  }
+  btn.disabled = false;
+  refreshBanner();
+  showStorage();
+};
+
+async function showStorage() {
+  try {
+    const { usage, quota } = await navigator.storage.estimate();
+    $("#storage-info").textContent = `Zajęte miejsce: ${(usage / 1e6).toFixed(0)} MB z ${(quota / 1e9).toFixed(1)} GB dostępnych.`;
+  } catch {}
 }
 
-$("#btn-save").onclick = () => {
-  readSettingsForm();
-  $("#settings-msg").textContent = "Zapisano ✔";
-};
-
-$("#btn-test").onclick = async () => {
-  readSettingsForm();
-  $("#settings-msg").textContent = "Testuję…";
-  try {
-    const t = await ask({ settings, mode: "text", content: "daba ghadi ncoulou l'empreinte b plâtre dur" });
-    $("#settings-msg").textContent = "Działa ✔ — " + t.replace(/[*#]/g, "").trim().slice(0, 160);
-  } catch (err) {
-    $("#settings-msg").textContent = explainError(err);
-  }
-};
-
-if (!settings.apiKey) showTab("settings");
+function refreshBanner() {
+  $("#setup-banner").hidden = modelsReady();
+}
+$("#btn-go-setup").onclick = () => showTab("settings");
+refreshBanner();
 
 // ---------- offline / PWA ----------
 const updateNet = () => ($("#net").hidden = navigator.onLine);

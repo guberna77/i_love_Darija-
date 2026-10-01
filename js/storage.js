@@ -4,10 +4,10 @@ const SETTINGS_KEY = "ild.settings";
 const SESSIONS_KEY = "ild.sessions";
 
 export const DEFAULT_SETTINGS = {
-  apiKey: "",
-  model: "claude-opus-5-5",
+  whisper: "whisper-base", // or "whisper-small" (better, slower, bigger)
   target: "pl",
-  speechLang: "ar-MA",
+  speechLang: "arabic", // "arabic" (Darija), "french" or "auto"
+  ready: {}, // whisper model name -> true once downloaded
 };
 
 function read(key, fallback) {
@@ -28,7 +28,13 @@ function write(key, value) {
   }
 }
 
-export const loadSettings = () => ({ ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) });
+export function loadSettings() {
+  const s = { ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) };
+  if (!["arabic", "french", "auto"].includes(s.speechLang)) s.speechLang = DEFAULT_SETTINGS.speechLang;
+  delete s.apiKey; // from the earlier online version
+  delete s.model;
+  return s;
+}
 export const saveSettings = (s) => write(SETTINGS_KEY, s);
 
 export const loadSessions = () => read(SESSIONS_KEY, []);

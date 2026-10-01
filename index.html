@@ -14,53 +14,44 @@
 <body>
   <header class="top">
     <h1>🦷 Darija&nbsp;Dental</h1>
-    <span id="net" class="pill" hidden>offline</span>
+    <span id="net" class="pill" hidden>offline ✓</span>
   </header>
 
   <main>
     <!-- NA ŻYWO -->
     <section id="tab-live" class="tab active">
+      <div id="setup-banner" class="card banner" hidden>
+        <b>Pierwsze uruchomienie:</b> pobierz modele (raz, przez Wi-Fi). Potem aplikacja działa bez internetu.
+        <button id="btn-go-setup" class="primary">⬇️ Pobierz modele</button>
+      </div>
       <div class="card controls">
         <input id="lesson-title" type="text" placeholder="Temat zajęć (np. Wycisk alginatowy)" />
-        <div class="row">
-          <label class="grow">Nauczyciel mówi:
-            <select id="speech-lang">
-              <option value="ar-MA">Darija (ar-MA) — mieszane z francuskim</option>
-              <option value="fr-FR">Français (fr-FR) — głównie po francusku</option>
-            </select>
-          </label>
-        </div>
+        <label>Nauczyciel mówi:
+          <select id="speech-lang">
+            <option value="arabic">Darija (mieszana z francuskim)</option>
+            <option value="french">Français — głównie po francusku</option>
+            <option value="auto">Automatycznie</option>
+          </select>
+        </label>
         <div class="row">
           <button id="btn-rec" class="big primary">🎙️ Start</button>
-          <button id="btn-summary" class="big" disabled>📝 Podsumuj</button>
+          <button id="btn-vocab" class="big" disabled>📚 Słówka z lekcji</button>
           <button id="btn-new" title="Nowe zajęcia">🆕</button>
         </div>
-        <p id="live-hint" class="hint">Połóż telefon blisko nauczyciela. Tłumaczenie pojawia się co kilka sekund.</p>
+        <div class="meter" aria-hidden="true"><div id="level"></div></div>
+        <p id="live-status" class="hint">Połóż telefon blisko nauczyciela. Tłumaczenie pojawia się po każdym zdaniu (kilka sekund opóźnienia).</p>
       </div>
-      <div id="interim" class="interim" hidden></div>
       <div id="live-feed" class="feed"></div>
     </section>
 
-    <!-- ZDJĘCIE -->
-    <section id="tab-photo" class="tab">
-      <div class="card">
-        <p>Zrób zdjęcie tablicy, slajdu lub kartki z instrukcją — dostaniesz tekst, tłumaczenie i słowniczek.</p>
-        <label class="big primary file-btn">📷 Zrób / wybierz zdjęcie
-          <input id="photo-input" type="file" accept="image/*" capture="environment" hidden />
-        </label>
-        <img id="photo-preview" alt="" hidden />
-      </div>
-      <div id="photo-feed" class="feed"></div>
-    </section>
-
-    <!-- TŁUMACZ / ZAPYTAJ -->
+    <!-- TŁUMACZ -->
     <section id="tab-ask" class="tab">
       <div class="card">
-        <textarea id="ask-input" rows="3" placeholder="Wpisz coś, co usłyszałaś (np. „daba khassek tcouli l'empreinte b plâtre”) albo zadaj pytanie…"></textarea>
+        <textarea id="ask-input" rows="3" placeholder="Wpisz coś, co usłyszałaś lub przeczytałaś (po francusku albo w darija pisanej arabskimi literami)…"></textarea>
         <div class="row">
           <button id="btn-translate" class="primary grow">🔁 Przetłumacz</button>
-          <button id="btn-ask" class="grow">💬 Zapytaj</button>
         </div>
+        <p class="hint">Słowa z darija pisane łacinką (np. „daba”, „khassek”) najlepiej sprawdzać w zakładce 📚 Słowa. Zdjęcie tablicy: użyj darmowej aplikacji <b>Google Lens</b> / <b>Tłumacz Google</b> (aparat).</p>
       </div>
       <div id="ask-feed" class="feed"></div>
     </section>
@@ -103,34 +94,39 @@
     <!-- USTAWIENIA -->
     <section id="tab-settings" class="tab">
       <div class="card">
-        <h2>Klucz API Claude</h2>
-        <p class="hint">Załóż konto na <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>, doładuj kilka dolarów i utwórz klucz. Klucz zostaje tylko na tym telefonie.</p>
-        <input id="api-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
-        <h2>Model</h2>
-        <select id="model">
-          <option value="claude-opus-5-5">Claude Opus 5.5 — najlepsza jakość</option>
-          <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — szybszy i tańszy</option>
-        </select>
-        <h2>Tłumacz na</h2>
-        <select id="target">
-          <option value="pl">Polski</option>
-          <option value="en">English</option>
-          <option value="fr">Français (prosty)</option>
-        </select>
+        <h2>Modele sztucznej inteligencji (darmowe)</h2>
+        <p class="hint">Wszystko działa w telefonie — bez konta, bez opłat, bez internetu. Modele trzeba pobrać <b>jeden raz</b> (przez Wi-Fi).</p>
+        <label>Rozpoznawanie mowy (Whisper):
+          <select id="whisper">
+            <option value="whisper-base">Szybki — whisper-base (≈ 80 MB)</option>
+            <option value="whisper-small">Dokładniejszy — whisper-small (≈ 250 MB, wolniejszy)</option>
+          </select>
+        </label>
+        <label>Tłumacz na:
+          <select id="target">
+            <option value="pl">Polski</option>
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+          </select>
+        </label>
+        <p class="hint">Tłumaczenie: model NLLB-200 (≈ 600 MB), zna darija marokańską.</p>
         <div class="row">
-          <button id="btn-save" class="primary grow">Zapisz</button>
-          <button id="btn-test" class="grow">Test</button>
+          <button id="btn-download" class="primary grow">⬇️ Pobierz / sprawdź modele</button>
         </div>
-        <p id="settings-msg" class="hint"></p>
+        <div id="dl" hidden>
+          <div class="meter big-meter"><div id="dl-bar"></div></div>
+          <p id="dl-text" class="hint"></p>
+        </div>
+        <p id="storage-info" class="hint"></p>
       </div>
       <div class="card">
         <h2>Wskazówki</h2>
         <ul>
-          <li>Używaj <b>Chrome</b> (Android) lub <b>Safari</b> (iPhone) — rozpoznawanie mowy działa tylko z internetem.</li>
-          <li>Jeśli nauczyciel mówi głównie po francusku, przełącz „Nauczyciel mówi” na <b>Français</b> — wynik będzie dokładniejszy.</li>
-          <li>Na koniec zajęć naciśnij <b>📝 Podsumuj</b>: dostaniesz notatki, słowniczek i pytania egzaminacyjne.</li>
-          <li>Dodaj aplikację do ekranu głównego (menu przeglądarki → „Dodaj do ekranu głównego”).</li>
-          <li>Zapytaj nauczyciela o zgodę na nagrywanie/transkrypcję zajęć.</li>
+          <li>Najlepiej działa w <b>Chrome</b> na telefonie z min. 4 GB RAM (lub na laptopie).</li>
+          <li>Jeśli nauczyciel mówi głównie po francusku, wybierz <b>Français</b> — wynik będzie dużo lepszy.</li>
+          <li>Tłumaczenie jest automatyczne i <b>przybliżone</b> — 📌 terminy pod spodem pochodzą ze sprawdzonego słowniczka.</li>
+          <li>Dodaj aplikację do ekranu głównego (menu → „Dodaj do ekranu głównego”).</li>
+          <li>Zapytaj nauczyciela o zgodę na nagrywanie zajęć.</li>
         </ul>
       </div>
     </section>
@@ -138,11 +134,10 @@
 
   <nav class="tabs">
     <button data-tab="live" class="on">🎙️<span>Na żywo</span></button>
-    <button data-tab="photo">📷<span>Zdjęcie</span></button>
-    <button data-tab="ask">💬<span>Tłumacz</span></button>
+    <button data-tab="ask">🔁<span>Tłumacz</span></button>
     <button data-tab="words">📚<span>Słowa</span></button>
     <button data-tab="notes">🗂️<span>Notatki</span></button>
-    <button data-tab="settings">⚙️<span>Ustaw.</span></button>
+    <button data-tab="settings">⚙️<span>Ustawienia</span></button>
   </nav>
 
   <div id="toast" class="toast" hidden></div>
